@@ -1006,6 +1006,43 @@ auto_install_socat() {
   success "socat 安装完成"
 }
 
+auto_install_crontab() {
+  if command_exists crontab; then
+    info "crontab 已安装"
+    return 0
+  fi
+
+  info "安装 cron/crontab..."
+  if command_exists apt-get; then
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq cron
+    systemctl enable cron >/dev/null 2>&1 || true
+    systemctl restart cron >/dev/null 2>&1 || true
+  elif command_exists dnf; then
+    dnf install -y -q cronie
+    systemctl enable crond >/dev/null 2>&1 || true
+    systemctl restart crond >/dev/null 2>&1 || true
+  elif command_exists yum; then
+    yum install -y -q cronie
+    systemctl enable crond >/dev/null 2>&1 || true
+    systemctl restart crond >/dev/null 2>&1 || true
+  elif command_exists apk; then
+    apk add --no-cache dcron
+    rc-update add dcron default >/dev/null 2>&1 || true
+    rc-service dcron restart >/dev/null 2>&1 || true
+  else
+    error "不支持的包管理器，请手动安装 cron/crontab"
+    print_fail_author
+    return 1
+  fi
+
+  command_exists crontab || {
+    error "cron/crontab 安装失败"
+    print_fail_author
+    return 1
+  }
+  success "cron/crontab 安装完成"
+}
+
 ensure_https_firewall_ports() {
   local changed=false
   if command_exists ufw; then
@@ -2469,6 +2506,7 @@ install_or_prepare_acme_sh() {
   local acme_url="https://raw.githubusercontent.com/acmesh-official/acme.sh/${acme_version}/acme.sh"
   local tmp_dir tmp_file expected_sha actual_sha
   [[ -x "${acme_bin}" ]] && return 0
+  auto_install_crontab
   info "安装 acme.sh..."
   tmp_dir="$(mktemp -d)"
   tmp_file="${tmp_dir}/acme.sh"
@@ -2533,6 +2571,7 @@ enable_https_for_binary() {
   local api_port; api_port="$(get_saved_api_port)"
   local acme_bin="${HOME}/.acme.sh/acme.sh"
   local cert_base="${install_dir}/certs"
+  auto_install_crontab
 
   # 申请三端证书：user 和 admin 用 webroot 模式，api 用 standalone 模式
   # （api 没有静态文件目录，需临时停 Nginx 用 standalone 申请）
