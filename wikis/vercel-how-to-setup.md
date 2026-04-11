@@ -1,6 +1,6 @@
 # Vercel 前后端分离部署教程（仅需手动部署API）
 
-核心说明：本教程实现「前端+后端均部署在Vercel」，操作简单，仅需手动部署API相关仓库，无需额外配置复杂环境，适配文档中涉及的 `/api/:path` 和 `/uploads/:path` 接口路径（解决报错“link fetch error”的核心部署配置）。
+核心说明：本教程实现「前端user+后端admin 均部署在Vercel」，操作简单，仅需手动部署API相关仓库，无需额外配置复杂环境。
 
 ## 一、前置准备
 
@@ -8,7 +8,7 @@
 
 - 拥有 Vercel 账号（用于部署项目，可直接用 GitHub 账号登录）
 
-- 已获取后端 API 域名（示例：`https://api.yourwebsite.com`，需替换为自身实际 API 域名）
+- 已安装部署后端，并确保后端可运行； API 域名（示例：`https://api.yourwebsite.com`，需替换为自身实际 API 域名）
 
 ## 二、详细部署步骤（共6步，全程可视化操作）
 
