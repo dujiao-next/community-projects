@@ -84,6 +84,7 @@ Language: [English](./README.md) | **简体中文**
 三级能力包括：
 
 - 自动安装 / 检查 Docker 与 Docker Compose
+- Docker 自动安装支持 Debian / Ubuntu，并会按系统自动选择对应的 Docker APT 仓库路径
 - 自动配置 Docker 镜像源
 - 自动修复 Redis 相关内核参数
 - 选择数据库模式：
@@ -326,6 +327,7 @@ Language: [English](./README.md) | **简体中文**
 - 建议使用 `root` 用户执行脚本
 - 如果不是 `root`，请先切换到 `root`，或确保当前用户具备完整 `sudo` 权限
 - Linux
+- Docker 自动安装推荐 Debian / Ubuntu；如果系统 APT 源本身不可用，请先修复 `/etc/apt/sources.list*`
 - `bash`
 - `curl`
 - `openssl`
@@ -357,14 +359,22 @@ su - root
 推荐方式：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dujiao-next/community-projects/main/scripts/langge-dujiao-next-install/dujiao-next-install.sh -o dujiao-next-install.sh
-bash dujiao-next-install.sh
+bash <(curl -fsSL https://down.dujiao-next.cc/dujiao-next-install.sh)
 ```
 
-镜像分发地址：
+请完整复制上面的命令执行；本脚本是交互式脚本，不要改成 `curl ... | bash`，否则菜单可能无法读取键盘输入。
+
+备用下载方式：
 
 ```bash
 curl -fsSL https://down.dujiao-next.cc/dujiao-next-install.sh -o dujiao-next-install.sh
+bash dujiao-next-install.sh
+```
+
+GitHub 源码下载：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dujiao-next/community-projects/main/scripts/langge-dujiao-next-install/dujiao-next-install.sh -o dujiao-next-install.sh
 bash dujiao-next-install.sh
 ```
 
@@ -415,6 +425,8 @@ langge-dujiao-next-install/
 ## 兼容性说明
 
 - 面向 Dujiao-Next 社区部署场景
+- Docker 自动安装会区分 Debian 与 Ubuntu：Debian 使用 `docker-ce/linux/debian`，Ubuntu 使用 `docker-ce/linux/ubuntu`
+- 如果安装时报 `Release file`、`404`、`no installation candidate`，请优先检查系统 APT 源与 Docker 源是否匹配当前发行版和 codename
 - 建议先在全新 Debian / Ubuntu 服务器上测试，再用于正式环境
 
 ## 开源协议

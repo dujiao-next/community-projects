@@ -74,6 +74,7 @@ Second-level deployment modes:
 Capabilities include:
 
 - Auto install / check Docker and Docker Compose
+- Docker auto-install supports Debian / Ubuntu and selects the matching Docker APT repository path for the detected distro
 - Docker mirror setup
 - Redis kernel parameter fixes
 - Database mode selection:
@@ -267,6 +268,7 @@ Recommended:
 - It is recommended to run the script as `root`
 - If you are not using `root`, switch to `root` first or make sure the current user has full `sudo` privileges
 - Linux
+- Docker auto-install is recommended on Debian / Ubuntu. If the system APT sources are broken, fix `/etc/apt/sources.list*` first.
 - `bash`
 - `curl`
 - `openssl`
@@ -298,14 +300,23 @@ su - root
 Recommended:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dujiao-next/community-projects/main/scripts/langge-dujiao-next-install/dujiao-next-install.sh -o dujiao-next-install.sh
-bash dujiao-next-install.sh
+bash <(curl -fsSL https://down.dujiao-next.cc/dujiao-next-install.sh)
 ```
 
-Mirror download:
+Because this is an interactive script, copy the command as-is. Do not change it
+to `curl ... | bash`, otherwise the menu may not be able to read keyboard input.
+
+Alternative download command:
 
 ```bash
 curl -fsSL https://down.dujiao-next.cc/dujiao-next-install.sh -o dujiao-next-install.sh
+bash dujiao-next-install.sh
+```
+
+GitHub source download:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dujiao-next/community-projects/main/scripts/langge-dujiao-next-install/dujiao-next-install.sh -o dujiao-next-install.sh
 bash dujiao-next-install.sh
 ```
 
@@ -356,6 +367,8 @@ langge-dujiao-next-install/
 ## Compatibility
 
 - Designed for Dujiao-Next community deployments
+- Docker auto-install distinguishes Debian and Ubuntu: Debian uses `docker-ce/linux/debian`, Ubuntu uses `docker-ce/linux/ubuntu`
+- If installation reports `Release file`, `404`, or `no installation candidate`, check whether the system APT sources and Docker repository match the current distro and codename first
 - Recommended to test on a fresh Debian / Ubuntu server before production use
 
 ## License

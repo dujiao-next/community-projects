@@ -168,14 +168,32 @@ warn_remote_shell_stability() {
 
 get_os_release_field() {
   local field="$1"
-  [[ -r /etc/os-release ]] || return 1
-  awk -F= -v key="${field}" '$1 == key { gsub(/^"/, "", $2); gsub(/"$/, "", $2); print tolower($2); exit }' /etc/os-release
+  local os_release_file="${OS_RELEASE_FILE:-/etc/os-release}"
+  [[ -r "${os_release_file}" ]] || return 1
+  awk -F= -v key="${field}" '$1 == key { gsub(/^"/, "", $2); gsub(/"$/, "", $2); print tolower($2); exit }' "${os_release_file}"
 }
 
 get_linux_pretty_name() {
   local pretty_name
   pretty_name="$(get_os_release_field "PRETTY_NAME" 2>/dev/null || true)"
   [[ -n "${pretty_name}" ]] && printf '%s' "${pretty_name}" || printf '%s' "unknown linux"
+}
+
+get_linux_codename() {
+  local codename
+  codename="$(get_os_release_field "VERSION_CODENAME" 2>/dev/null || true)"
+  [[ -z "${codename}" ]] && codename="$(get_os_release_field "UBUNTU_CODENAME" 2>/dev/null || true)"
+  [[ -z "${codename}" ]] && command_exists lsb_release && codename="$(lsb_release -cs 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)"
+  [[ -n "${codename}" ]] && printf '%s' "${codename}"
+}
+
+get_docker_apt_os() {
+  local distro_id
+  distro_id="$(get_os_release_field "ID" 2>/dev/null || true)"
+  case "${distro_id}" in
+    debian|ubuntu) printf '%s' "${distro_id}" ;;
+    *) return 1 ;;
+  esac
 }
 
 is_supported_hardening_distro() {
@@ -719,9 +737,19 @@ auto_install_docker() {
     apt-get clean -qq 2>/dev/null || true
   }
 
+  _print_apt_error_summary() {
+    local log_file="$1"
+    [[ -s "${log_file}" ]] || return 0
+    warn "APT 错误摘要："
+    grep -E '^(E:|W:|Err:)' "${log_file}" | head -n 10 | while IFS= read -r line; do
+      warn "  ${line}"
+    done || true
+  }
+
   # ── 辅助：用指定 gpg_url + apt_url 安装 docker ───
   _try_install_from_mirror() {
-    local gpg_url="$1" apt_url="$2" label="$3"
+    local gpg_url="$1" apt_url="$2" label="$3" docker_codename="$4"
+    local apt_log="/tmp/dujiao-next-docker-apt-update.log"
     info "尝试 ${label} 镜像..."
     _cleanup_docker_apt
 
@@ -749,10 +777,29 @@ auto_install_docker() {
     fi
 
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
-${apt_url} $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
+${apt_url} ${docker_codename} stable" > /etc/apt/sources.list.d/docker.list
 
-    if apt-get update -qq 2>&1 | grep -q "NO_PUBKEY\|not signed"; then
-      warn "${label}: apt update 签名验证仍失败，跳过"
+    if ! apt-get update -qq > "${apt_log}" 2>&1; then
+      warn "${label}: apt update 失败，可能是系统软件源或 Docker 源不可用，跳过"
+      warn "检测系统: $(get_linux_pretty_name)"
+      warn "当前 Docker 源: ${apt_url} ${docker_codename} stable"
+      _print_apt_error_summary "${apt_log}"
+      warn "如果摘要包含 Release file / 404 / no longer has a Release file，请先修复 /etc/apt/sources.list* 后重试。"
+      return 1
+    fi
+
+    local missing_pkgs=()
+    local pkg
+    for pkg in docker-ce docker-ce-cli containerd.io docker-compose-plugin; do
+      if ! apt-cache policy "${pkg}" | awk '/Candidate:/ && $2 != "(none)" { found=1 } END { exit found ? 0 : 1 }'; then
+        missing_pkgs+=("${pkg}")
+      fi
+    done
+    if ((${#missing_pkgs[@]} > 0)); then
+      warn "${label}: 未找到 Docker 包候选版本: ${missing_pkgs[*]}"
+      warn "检测系统: $(get_linux_pretty_name)"
+      warn "当前 Docker 源: ${apt_url} ${docker_codename} stable"
+      warn "Debian 应使用 docker-ce/linux/debian，Ubuntu 应使用 docker-ce/linux/ubuntu；如系统源异常，请先修复系统 APT 源。"
       return 1
     fi
 
@@ -770,10 +817,20 @@ ${apt_url} $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
   if [[ "${installed}" == false ]] && command_exists apt-get; then
     apt-get install -y -qq apt-transport-https ca-certificates gnupg lsb-release curl 2>/dev/null || true
 
+    local docker_apt_os docker_codename
+    docker_apt_os="$(get_docker_apt_os 2>/dev/null || true)"
+    docker_codename="$(get_linux_codename 2>/dev/null || true)"
+    if [[ -z "${docker_apt_os}" || -z "${docker_codename}" ]]; then
+      error "无法识别当前 Debian/Ubuntu 发行版，不能自动配置 Docker APT 源。"
+      error "检测系统: $(get_linux_pretty_name)"
+      error "请修复 /etc/os-release 或手动安装 Docker 后重试。"
+      print_fail_author; exit 1
+    fi
+
     local mirrors=(
-      "https://mirrors.aliyun.com/docker-ce/linux/ubuntu/gpg|https://mirrors.aliyun.com/docker-ce/linux/ubuntu|阿里云"
-      "https://mirrors.cloud.tencent.com/docker-ce/linux/ubuntu/gpg|https://mirrors.cloud.tencent.com/docker-ce/linux/ubuntu|腾讯云"
-      "https://mirrors.ustc.edu.cn/docker-ce/linux/ubuntu/gpg|https://mirrors.ustc.edu.cn/docker-ce/linux/ubuntu|中科大"
+      "https://mirrors.aliyun.com/docker-ce/linux/${docker_apt_os}/gpg|https://mirrors.aliyun.com/docker-ce/linux/${docker_apt_os}|阿里云"
+      "https://mirrors.cloud.tencent.com/docker-ce/linux/${docker_apt_os}/gpg|https://mirrors.cloud.tencent.com/docker-ce/linux/${docker_apt_os}|腾讯云"
+      "https://mirrors.ustc.edu.cn/docker-ce/linux/${docker_apt_os}/gpg|https://mirrors.ustc.edu.cn/docker-ce/linux/${docker_apt_os}|中科大"
     )
     for entry in "${mirrors[@]}"; do
       local gpg_url apt_url label
@@ -781,7 +838,7 @@ ${apt_url} $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
       apt_url="${entry#*|}"
       apt_url="${apt_url%%|*}"
       label="${entry##*|}"
-      if _try_install_from_mirror "${gpg_url}" "${apt_url}" "${label}"; then
+      if _try_install_from_mirror "${gpg_url}" "${apt_url}" "${label}" "${docker_codename}"; then
         installed=true; break
       fi
     done
@@ -794,6 +851,7 @@ ${apt_url} $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
   if ! command_exists docker; then
     error "Docker 自动安装失败，请手动执行："
     error "  curl -fsSL https://get.docker.com | bash"
+    error "如果当前是 Debian/Ubuntu，请先确认系统 APT 源可用，再重试本脚本。"
     print_fail_author; exit 1
   fi
 
