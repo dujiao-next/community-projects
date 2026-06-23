@@ -102,6 +102,10 @@ Language: [English](./README.md) | **简体中文**
   - API 域名
   - 是否启用 HTTPS
   - ACME 邮箱
+- 自动写入分销模式基础配置：
+  - 启用 `reseller.enabled`
+  - 将 User / Admin / API 三端域名写入 `reseller.main_hosts`
+  - 将 User 主域名写入 `reseller.subdomain_base`
 - 自动生成：
   - `.env`
   - `config/config.yml`
@@ -143,6 +147,7 @@ Language: [English](./README.md) | **简体中文**
 - 自动创建或复用 PostgreSQL 数据库与用户，新建本机数据库时强制使用 UTF-8 编码
 - 自动生成 API 配置文件
 - 自动生成 JWT / User JWT / Redis 队列配置
+- 自动写入分销模式基础配置，将 User / Admin / API 三端域名写入 `reseller.main_hosts`，并将 User 主域名写入 `reseller.subdomain_base`
 - 自动设置默认管理员账户
 - 自动写入 systemd 服务
 - 自动配置 Nginx 站点
@@ -163,6 +168,7 @@ Language: [English](./README.md) | **简体中文**
 - 录入外部 Redis 连接信息
 - 从所选 Docker 网络验证 Redis 连通性与密码是否正确
 - 设置默认管理员账户
+- 录入 User / Admin / API 三端主域名，用于生成 `reseller.main_hosts` 与 `reseller.subdomain_base`
 - 自动生成：
   - `config.yml`
   - `docker-compose.yml`
@@ -182,6 +188,7 @@ Language: [English](./README.md) | **简体中文**
   - Docker 模式：更新 `.env` 中 TAG，重新拉取镜像并重启
   - 二进制模式：下载新版本 API / User / Admin 包并替换
   - 外部环境模式：更新 `docker-compose.yml` 镜像 TAG 并重启
+- 更新时若配置文件缺少 `reseller:` 段，会基于已记录的 User / Admin / API 域名自动追加；已有 `reseller:` 段时不会覆盖
 - 更新完成后写回部署状态
 
 ### 3. 配置 HTTPS
@@ -415,6 +422,8 @@ bash dujiao-next-install.sh
 ```text
 langge-dujiao-next-install/
   dujiao-next-install.sh
+  tests/
+    reseller_config_test.sh
   assets/screenshots/
   README.md
   README.zh-CN.md
