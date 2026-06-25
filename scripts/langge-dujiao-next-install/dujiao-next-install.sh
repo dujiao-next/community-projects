@@ -313,6 +313,46 @@ prompt_available_host_port() {
   done
 }
 
+prompt_available_container_port() {
+  local label="$1" default_port="$2"
+  local port choice
+  while true; do
+    port="$(prompt_with_default "${label} 端口" "${default_port}")"
+    validate_port_number "${port}" || {
+      error "无效的 ${label} 端口: ${port}"
+      continue
+    }
+    if ! host_port_in_use "${port}"; then
+      _HOST_PORT_VALUE="${port}"
+      return 0
+    fi
+
+    error "${label} 端口 ${port} 已被宿主机占用，Docker 容器无法绑定该端口"
+    show_host_port_owner "${port}"
+    print_line
+    echo "  请选择处理方式："
+    echo "  1) 重新输入 ${label} 端口"
+    echo "  2) 取消部署（默认）"
+    print_line
+    printf '%s' "  请输入选项 [1-2] (默认 2): " >&2
+    read -r choice
+    choice="$(trim "${choice}")"
+    case "${choice}" in
+      1)
+        default_port="${port}"
+        continue
+        ;;
+      ""|2)
+        error "已取消安装。请先处理 ${label} 端口占用，或重新运行脚本选择其他端口。"
+        return 1
+        ;;
+      *)
+        warn "无效选项: ${choice}，请输入 1 或 2"
+        ;;
+    esac
+  done
+}
+
 set_config_kv() {
   local file="$1" key="$2" value="$3"
   if grep -Eq "^[#[:space:]]*${key}[[:space:]]+" "${file}"; then
@@ -713,6 +753,49 @@ DJ_DEFAULT_ADMIN_PASSWORD=${admin_password}
 ENVEOF
 }
 
+render_reseller_config_block() {
+  local user_domain="${1:-}" admin_domain="${2:-}" api_domain="${3:-}"
+  local subdomain_base="${4:-${user_domain}}"
+
+  cat <<CFGEOF
+reseller:
+  enabled: true
+  main_hosts:
+CFGEOF
+  [[ -n "${user_domain}" ]] && printf '    - %s\n' "${user_domain}"
+  [[ -n "${admin_domain}" ]] && printf '    - %s\n' "${admin_domain}"
+  [[ -n "${api_domain}" ]] && printf '    - %s\n' "${api_domain}"
+  cat <<CFGEOF
+    - localhost
+    - 127.0.0.1
+    - ::1
+  trusted_forwarded_host: false
+  subdomain_base: "${subdomain_base}"
+  self_apply_enabled: true
+  settlement_confirm_days: 7
+CFGEOF
+}
+
+ensure_reseller_config_present() {
+  local config_file="$1" user_domain="${2:-}" admin_domain="${3:-}" api_domain="${4:-}"
+  [[ -f "${config_file}" ]] || { warn "未找到配置文件，跳过 reseller 配置迁移: ${config_file}"; return 0; }
+  if grep -Eq '^reseller[[:space:]]*:' "${config_file}"; then
+    info "配置文件已存在 reseller 段，跳过自动迁移"
+    return 0
+  fi
+  if [[ -z "${user_domain}" || -z "${admin_domain}" || -z "${api_domain}" ]]; then
+    warn "部署状态缺少 User/Admin/API 域名，跳过 reseller 配置迁移，请手动补充 ${config_file}"
+    return 0
+  fi
+
+  cp -f "${config_file}" "${config_file}.bak"
+  {
+    printf '\n'
+    render_reseller_config_block "${user_domain}" "${admin_domain}" "${api_domain}"
+  } >> "${config_file}"
+  success "已追加 reseller 配置段: ${config_file}"
+}
+
 # ══════════════════════════════════════════════════
 # 自动安装 Docker
 # ══════════════════════════════════════════════════
@@ -961,6 +1044,7 @@ select_root_ssh_login_mode() {
 write_docker_config_file() {
   local config_file="$1" db_mode="$2" redis_password="$3"
   local postgres_db="$4" postgres_user="$5" postgres_password="$6"
+  local user_domain="${7:-}" admin_domain="${8:-}" api_domain="${9:-}"
   local jwt_secret; jwt_secret="$(random_string 40)"
   local user_jwt_secret; user_jwt_secret="$(random_string 40)"
   local dsn
@@ -1013,6 +1097,10 @@ queue:
 email:
   enabled: false
 CFGEOF
+  {
+    printf '\n'
+    render_reseller_config_block "${user_domain}" "${admin_domain}" "${api_domain}"
+  } >> "${config_file}"
 }
 
 write_compose_sqlite_file() {
@@ -1737,6 +1825,37 @@ collect_domain_config() {
   fi
 }
 
+collect_primary_domain_config() {
+  echo "" >&2
+  print_line >&2
+  printf '%b\n' "  ${BOLD}🌐 主域名配置${NC}" >&2
+  print_line >&2
+  echo "  请录入三端主域名，用于生成应用配置中的 reseller.main_hosts" >&2
+  echo "  外部环境的反向代理和 SSL 仍需在面板中配置" >&2
+  echo "" >&2
+
+  local user_domain admin_domain api_domain
+  while true; do
+    user_domain="$(prompt_with_default "用户端域名 (如 dujiao.yourdomain.com)" "")"
+    validate_domain "${user_domain}" && break
+    warn "域名格式不正确，请重新输入"
+  done
+  while true; do
+    admin_domain="$(prompt_with_default "管理端域名 (如 admin.yourdomain.com)" "")"
+    validate_domain "${admin_domain}" && [[ "${admin_domain}" != "${user_domain}" ]] && break
+    warn "域名格式不正确或与用户端相同，请重新输入"
+  done
+  while true; do
+    api_domain="$(prompt_with_default "API 域名     (如 api.yourdomain.com)" "")"
+    validate_domain "${api_domain}" && [[ "${api_domain}" != "${user_domain}" ]] && [[ "${api_domain}" != "${admin_domain}" ]] && break
+    warn "域名格式不正确或与已填写域名重复，请重新输入"
+  done
+
+  _USER_DOMAIN="${user_domain}"
+  _ADMIN_DOMAIN="${admin_domain}"
+  _API_DOMAIN="${api_domain}"
+}
+
 deploy_with_docker() {
   print_line
   echo "  ${BOLD}🐳 Docker Compose 部署${NC}"
@@ -1770,7 +1889,7 @@ deploy_with_docker() {
   local postgres_db postgres_user postgres_password
   local admin_username admin_password
 
-  deploy_dir="$(prompt_with_default "Install directory" "${HOME}/dujiao-next")"
+  deploy_dir="$(prompt_with_default "部署目录" "${HOME}/dujiao-next")"
   if docker_install_residue_detected "${deploy_dir}"; then
     warn "检测到 ${deploy_dir} 存在未完成安装残留。直接重新全新安装可能导致 Redis/数据库认证异常。"
     if ask_yes_no "是否先清理旧容器和数据库/缓存数据后再继续全新安装" "y"; then
@@ -1782,9 +1901,21 @@ deploy_with_docker() {
     fi
   fi
   tz="$(prompt_with_default "时区" "Asia/Shanghai")"
-  api_port="$(prompt_with_default "API 端口" "8080")"
-  user_port="$(prompt_with_default "User 端口" "8081")"
-  admin_port="$(prompt_with_default "Admin 端口" "8082")"
+  _HOST_PORT_VALUE=""
+  prompt_available_container_port "API" "8080" || {
+    print_fail_author; return 1
+  }
+  api_port="${_HOST_PORT_VALUE}"
+  _HOST_PORT_VALUE=""
+  prompt_available_container_port "用户端" "8081" || {
+    print_fail_author; return 1
+  }
+  user_port="${_HOST_PORT_VALUE}"
+  _HOST_PORT_VALUE=""
+  prompt_available_container_port "管理端" "8082" || {
+    print_fail_author; return 1
+  }
+  admin_port="${_HOST_PORT_VALUE}"
   _HOST_PORT_VALUE=""
   prompt_available_host_port "Redis" "6379" "redis-server redis" || {
     print_fail_author; return 1
@@ -1839,7 +1970,8 @@ deploy_with_docker() {
     "${admin_username}" "${admin_password}"
 
   write_docker_config_file "${config_file}" "${db_mode}" \
-    "${redis_password}" "${postgres_db}" "${postgres_user}" "${postgres_password}"
+    "${redis_password}" "${postgres_db}" "${postgres_user}" "${postgres_password}" \
+    "${user_domain}" "${admin_domain}" "${api_domain}"
 
   if [[ "${db_mode}" == "postgres" ]]; then
     write_compose_postgres_file "${compose_file}"
@@ -1996,6 +2128,7 @@ write_binary_config_file() {
   local admin_user="$4" admin_pass="$5" redis_pass="$6"
   local db_mode="${7:-sqlite}" pg_host="${8:-127.0.0.1}" pg_port="${9:-5432}"
   local pg_db="${10:-dujiao_next}" pg_user="${11:-dujiao}" pg_password="${12:-}"
+  local user_domain="${13:-}" admin_domain="${14:-}" api_domain="${15:-}"
   local jwt; jwt="$(random_string 40)"
   local ujwt; ujwt="$(random_string 40)"
   local dsn
@@ -2052,6 +2185,10 @@ queue:
 email:
   enabled: false
 CFGEOF
+  {
+    printf '\n'
+    render_reseller_config_block "${user_domain}" "${admin_domain}" "${api_domain}"
+  } >> "${config_file}"
 }
 
 validate_pg_identifier() {
@@ -2386,6 +2523,7 @@ deploy_with_binary() {
   fi
 
   local install_dir tz api_port user_port admin_port admin_username admin_password
+  local user_domain="" admin_domain="" api_domain="" ssl_enabled="" acme_email=""
   local db_mode pg_host pg_port pg_db pg_user pg_password
   local postgres_installed_by_script="false"
   _DB_MODE=""
@@ -2398,11 +2536,30 @@ deploy_with_binary() {
   [[ -z "${tag}" || "${tag}" == "latest" ]] && tag="${default_tag}"
   install_dir="$(prompt_with_default "部署目录" "${HOME}/dujiao-next-bin")"
   tz="$(prompt_with_default "时区" "Asia/Shanghai")"
-  api_port="$(prompt_with_default "API 端口" "8080")"
-  user_port="$(prompt_with_default "User 端口" "8081")"
-  admin_port="$(prompt_with_default "Admin 端口" "8082")"
+  _HOST_PORT_VALUE=""
+  prompt_available_container_port "API" "8080" || {
+    print_fail_author; return 1
+  }
+  api_port="${_HOST_PORT_VALUE}"
+  _HOST_PORT_VALUE=""
+  prompt_available_container_port "用户端" "8081" || {
+    print_fail_author; return 1
+  }
+  user_port="${_HOST_PORT_VALUE}"
+  _HOST_PORT_VALUE=""
+  prompt_available_container_port "管理端" "8082" || {
+    print_fail_author; return 1
+  }
+  admin_port="${_HOST_PORT_VALUE}"
   admin_username="$(prompt_with_default "管理员用户名" "admin")"
   admin_password="$(prompt_with_default "管理员密码" "Admin@123456")"
+  _USER_DOMAIN="" _ADMIN_DOMAIN="" _API_DOMAIN="" _SSL_ENABLED="" _ACME_EMAIL=""
+  collect_domain_config
+  user_domain="${_USER_DOMAIN}"
+  admin_domain="${_ADMIN_DOMAIN}"
+  api_domain="${_API_DOMAIN}"
+  ssl_enabled="${_SSL_ENABLED}"
+  acme_email="${_ACME_EMAIL}"
   if [[ "${db_mode}" == "postgres" ]]; then
     if ! command_exists psql || ! command_exists pg_isready; then
       postgres_installed_by_script="true"
@@ -2467,7 +2624,8 @@ deploy_with_binary() {
 
   write_binary_config_file "${install_dir}/config.yml" "${install_dir}" "${api_port}" \
     "${admin_username}" "${admin_password}" "" \
-    "${db_mode}" "${pg_host}" "${pg_port}" "${pg_db}" "${pg_user}" "${pg_password}"
+    "${db_mode}" "${pg_host}" "${pg_port}" "${pg_db}" "${pg_user}" "${pg_password}" \
+    "${user_domain}" "${admin_domain}" "${api_domain}"
 
   if ask_yes_no "是否创建并启动 systemd 服务" "y"; then
     if setup_systemd_service "${install_dir}" "dujiao-next-api.service" "${tz}" "${admin_username}" "${admin_password}"; then
@@ -2476,15 +2634,6 @@ deploy_with_binary() {
       warn "请手动运行: cd ${install_dir} && ./api/dujiao-next -mode all"
     fi
   fi
-
-  local user_domain="" admin_domain="" api_domain="" ssl_enabled="" acme_email=""
-  _USER_DOMAIN="" _ADMIN_DOMAIN="" _API_DOMAIN="" _SSL_ENABLED="" _ACME_EMAIL=""
-  collect_domain_config
-  user_domain="${_USER_DOMAIN}"
-  admin_domain="${_ADMIN_DOMAIN}"
-  api_domain="${_API_DOMAIN}"
-  ssl_enabled="${_SSL_ENABLED}"
-  acme_email="${_ACME_EMAIL}"
 
   auto_install_nginx
   if [[ -n "${user_domain}" && -n "${admin_domain}" && -n "${api_domain}" ]]; then
@@ -2606,9 +2755,22 @@ deploy_external() {
   local latest_tag; latest_tag="$(fetch_latest_release_tag "${DUJIAO_API_REPO}")"
   local tag; tag="$(prompt_with_default "镜像版本 TAG" "${latest_tag:-latest}")"
   local install_dir; install_dir="$(prompt_with_default "部署目录" "/opt/dujiao-next")"
-  local api_port; api_port="$(prompt_with_default "API 端口" "8080")"
-  local user_port; user_port="$(prompt_with_default "User 端口" "3001")"
-  local admin_port; admin_port="$(prompt_with_default "Admin 端口" "3000")"
+  local api_port user_port admin_port
+  _HOST_PORT_VALUE=""
+  prompt_available_container_port "API" "8080" || {
+    print_fail_author; return 1
+  }
+  api_port="${_HOST_PORT_VALUE}"
+  _HOST_PORT_VALUE=""
+  prompt_available_container_port "用户端" "3001" || {
+    print_fail_author; return 1
+  }
+  user_port="${_HOST_PORT_VALUE}"
+  _HOST_PORT_VALUE=""
+  prompt_available_container_port "管理端" "3000" || {
+    print_fail_author; return 1
+  }
+  admin_port="${_HOST_PORT_VALUE}"
 
   local pg_host pg_port pg_db pg_user pg_password
   _EXT_PG_HOST="" _EXT_PG_PORT="" _EXT_PG_DB="" _EXT_PG_USER="" _EXT_PG_PASSWORD=""
@@ -2633,6 +2795,12 @@ deploy_external() {
   local admin_username admin_password
   admin_username="$(prompt_with_default "管理员用户名" "admin")"
   admin_password="$(prompt_with_default "管理员密码" "Admin@123456")"
+  local user_domain="" admin_domain="" api_domain=""
+  _USER_DOMAIN="" _ADMIN_DOMAIN="" _API_DOMAIN=""
+  collect_primary_domain_config
+  user_domain="${_USER_DOMAIN}"
+  admin_domain="${_ADMIN_DOMAIN}"
+  api_domain="${_API_DOMAIN}"
 
   mkdir -p "${install_dir}/uploads" "${install_dir}/logs"
 
@@ -2687,6 +2855,10 @@ bootstrap:
 email:
   enabled: false
 CFGEOF
+  {
+    printf '\n'
+    render_reseller_config_block "${user_domain}" "${admin_domain}" "${api_domain}"
+  } >> "${install_dir}/config.yml"
 
   cat > "${install_dir}/docker-compose.yml" << COMPOSEEOF
 services:
@@ -2751,8 +2923,8 @@ COMPOSEEOF
 
   write_state_file "external" "${install_dir}" "${tag}" "${tag}" "${tag}" \
     "postgres" "$(date '+%Y-%m-%d %H:%M:%S')" \
-    "false" "" "" "" "" "" \
-    "${api_port}" "${pg_host}" "${pg_port}" "${pg_db}" "${pg_user}" ""
+    "false" "" "${user_domain}" "${admin_domain}" "none" "" \
+    "${api_port}" "${pg_host}" "${pg_port}" "${pg_db}" "${pg_user}" "${api_domain}"
 
   local server_ip; server_ip="$(curl -s --connect-timeout 5 ifconfig.me 2>/dev/null || echo "服务器IP")"
   echo ""
@@ -2766,6 +2938,11 @@ COMPOSEEOF
   echo "  API   : http://${server_ip}:${api_port}"
   echo "  User  : http://${server_ip}:${user_port}"
   echo "  Admin : http://${server_ip}:${admin_port}"
+  echo ""
+  echo "  主域名："
+  echo "  User  : ${user_domain}"
+  echo "  Admin : ${admin_domain}"
+  echo "  API   : ${api_domain}"
   echo ""
   echo "  ${Y}⚠️  请前往面板配置反向代理和 SSL：${NC}"
   echo "  User  域名 → 代理到 http://127.0.0.1:${user_port}"
@@ -3142,6 +3319,9 @@ update_binary() {
   info "替换 Admin 前端..."
   extract_frontend_package "${admin_pkg}" "${install_dir}/admin/dist"
 
+  ensure_reseller_config_present "${install_dir}/config.yml" \
+    "${USER_DOMAIN:-}" "${ADMIN_DOMAIN:-}" "${API_DOMAIN:-}"
+
   if command_exists systemctl && systemctl is-enabled --quiet "${service_name}" 2>/dev/null; then
     info "重启服务 ${service_name}..."
     run_as_root systemctl start "${service_name}"
@@ -3197,6 +3377,8 @@ do_update() {
       env_file="${install_dir}/.env"
       [[ ! -f "${env_file}" ]] && { error "未找到 .env 文件"; return 1; }
       sed -i "s/^TAG=.*/TAG=${new_tag}/" "${env_file}"
+      ensure_reseller_config_present "${install_dir}/config/config.yml" \
+        "${USER_DOMAIN:-}" "${ADMIN_DOMAIN:-}" "${API_DOMAIN:-}"
       info "正在拉取新镜像..."
       docker compose --env-file "${env_file}" -f "${compose_file}" pull
       info "正在重启服务..."
@@ -3215,6 +3397,8 @@ do_update() {
       compose_file="${install_dir}/docker-compose.yml"
       [[ ! -f "${compose_file}" ]] && { error "未找到 docker-compose.yml"; return 1; }
       update_external_compose_tags "${compose_file}" "${new_tag}" || return 1
+      ensure_reseller_config_present "${install_dir}/config.yml" \
+        "${USER_DOMAIN:-}" "${ADMIN_DOMAIN:-}" "${API_DOMAIN:-}"
       info "正在拉取新镜像..."
       docker compose -f "${compose_file}" pull
       info "正在重启服务..."
@@ -3495,6 +3679,7 @@ do_uninstall() {
 
   info "删除状态文件..."
   rm -f "${STATE_FILE}"
+  rmdir "${STATE_DIR}" 2>/dev/null || true
 
   info "清理 Nginx 配置..."
   rm -f /etc/nginx/sites-available/dujiao-*.conf 2>/dev/null || true

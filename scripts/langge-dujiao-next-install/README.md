@@ -88,6 +88,10 @@ Capabilities include:
 - Default admin username and password setup
 - Domain collection for User / Admin / API
 - Optional HTTPS and ACME email configuration
+- Base reseller configuration generation:
+  - enable `reseller.enabled`
+  - add User / Admin / API domains to `reseller.main_hosts`
+  - set `reseller.subdomain_base` to the User primary domain
 - Auto-generated `.env`, `config.yml`, and compose files
 - Image pull and service startup
 - API health checks
@@ -111,6 +115,7 @@ Capabilities include:
 - Pre-check local PostgreSQL availability before writing config
 - Auto create / reuse PostgreSQL database and user, enforcing UTF-8 encoding for newly created local databases
 - Generate API config, JWT, Redis, and queue settings
+- Generate the base reseller configuration, add User / Admin / API domains to `reseller.main_hosts`, and set `reseller.subdomain_base` to the User primary domain
 - Configure default admin account
 - Write and enable a systemd service
 - Generate Nginx site config
@@ -130,6 +135,7 @@ Capabilities include:
 - External Redis connection setup
 - Redis connectivity and password validation from the selected Docker network
 - Default admin account setup
+- User / Admin / API primary domain collection for `reseller.main_hosts` and `reseller.subdomain_base`
 - Auto-generate `config.yml` and `docker-compose.yml`
 - Pull and start containers
 - Save local deployment state
@@ -146,6 +152,7 @@ Capabilities include:
   - Docker: change tag in `.env`, pull and restart
   - Binary: download and replace API / User / Admin packages
   - External: update image tags in `docker-compose.yml` and restart
+- If `config.yml` has no `reseller:` block, append one from the saved User / Admin / API domains; existing `reseller:` blocks are kept unchanged
 - Write updated deployment state
 
 ### 3. Configure HTTPS
@@ -357,6 +364,8 @@ bash dujiao-next-install.sh
 ```text
 langge-dujiao-next-install/
   dujiao-next-install.sh
+  tests/
+    reseller_config_test.sh
   assets/screenshots/
   README.md
   README.zh-CN.md
