@@ -1,0 +1,5 @@
+# Secrets and runtime data — never commit these
+.env
+config.yml
+data/
+backups/

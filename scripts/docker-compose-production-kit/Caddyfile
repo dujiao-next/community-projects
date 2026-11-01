@@ -1,0 +1,7 @@
+# Caddy reverse proxy for Dujiao-Next (used by the "proxy" compose profile).
+# SITE_DOMAIN comes from .env; Caddy obtains and renews HTTPS certificates
+# automatically. Point your domain's DNS A/AAAA records at this host first.
+{$SITE_DOMAIN} {
+	reverse_proxy app:8080
+	encode gzip
+}
